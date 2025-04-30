@@ -63,8 +63,12 @@ client.on('interactionCreate', async interaction => {
       .replace(/<img id="product-image"[^>]*src="[^"]*"/, `<img id="product-image" src="${data.image_url}"`)
       .replace(/<a id="product-link"[^>]*href="[^"]*"/, `<a id="product-link" href="${data.image_click_link}"`);
 
-    // Generate screenshot
-    const browser = await puppeteer.launch({ headless: true });
+    // Generate screenshot with Puppeteer using Render-safe flags
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'load' });
 
@@ -74,7 +78,7 @@ client.on('interactionCreate', async interaction => {
       return img && img.complete && img.naturalHeight !== 0;
     });
 
-    const imagePath = './receipt.png';
+    const imagePath = path.join(__dirname, 'receipt.png');
     await page.screenshot({ path: imagePath, fullPage: true });
     await browser.close();
 
