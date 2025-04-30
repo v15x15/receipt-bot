@@ -1,2 +1,8 @@
+<<<<<<< HEAD
 node_modules/ 
 ".env" 
+=======
+.env 
+node_modules 
+receipt.png 
+>>>>>>> 6529422 (Initial clean commit with working bot)

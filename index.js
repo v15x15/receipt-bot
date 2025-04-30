@@ -2,13 +2,11 @@ require('dotenv').config(); // Loads the variables from .env
 
 const token = process.env.DISCORD_TOKEN; // Access the token
 
-
 const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer');
 const nodemailer = require('nodemailer');
-require('dotenv').config();
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
@@ -24,13 +22,11 @@ client.on('interactionCreate', async interaction => {
     const requiredRoleId = '1366762958339838073';
 
     if (interaction.channelId !== allowedChannelId) {
-      await interaction.reply({ content: '🚫 Access Denied, Reason : Not a member', ephemeral: true });
-      return;
+      return interaction.reply({ content: '🚫 Access Denied, Reason : Not a member', ephemeral: true });
     }
 
     if (!interaction.member.roles.cache.has(requiredRoleId)) {
-      await interaction.reply({ content: '🚫 Access Denied, Reason : Missing required role', ephemeral: true });
-      return;
+      return interaction.reply({ content: '🚫 Access Denied, Reason : Missing required role', ephemeral: true });
     }
 
     const data = {
@@ -53,26 +49,25 @@ client.on('interactionCreate', async interaction => {
 
     let html = fs.readFileSync(path.join(__dirname, 'email.html'), 'utf8');
 
-    // Replace placeholders in email.html
-    html = html.replace(/<span id="item-title"><\/span>/, data.item_title);
-    html = html.replace(/<span id="item-size"><\/span>/, data.item_size);
-    html = html.replace(/<span id="item-condition"><\/span>/, data.item_condition);
-    html = html.replace(/<span id="order-number"><\/span>/, data.order_number);
-    html = html.replace(/<span id="price"><\/span>/, data.price);
-    html = html.replace(/<span id="tax"><\/span>/, data.tax);
-    html = html.replace(/<span id="processing-fee"><\/span>/, data.processing_fee);
-    html = html.replace(/<span id="shipping"><\/span>/, data.shipping);
-    html = html.replace(/<span id="total"><\/span>/, data.total);
-    html = html.replace(/<span id="delivery-date"><\/span>/, data.delivery_date);
-    html = html.replace(/<img id="product-image"[^>]*src="[^"]*"/, `<img id="product-image" src="${data.image_url}"`);
-    html = html.replace(/<a id="product-link"[^>]*href="[^"]*"/, `<a id="product-link" href="${data.image_click_link}"`);
+    // Replace placeholders
+    html = html.replace(/<span id="item-title"><\/span>/, data.item_title)
+      .replace(/<span id="item-size"><\/span>/, data.item_size)
+      .replace(/<span id="item-condition"><\/span>/, data.item_condition)
+      .replace(/<span id="order-number"><\/span>/, data.order_number)
+      .replace(/<span id="price"><\/span>/, data.price)
+      .replace(/<span id="tax"><\/span>/, data.tax)
+      .replace(/<span id="processing-fee"><\/span>/, data.processing_fee)
+      .replace(/<span id="shipping"><\/span>/, data.shipping)
+      .replace(/<span id="total"><\/span>/, data.total)
+      .replace(/<span id="delivery-date"><\/span>/, data.delivery_date)
+      .replace(/<img id="product-image"[^>]*src="[^"]*"/, `<img id="product-image" src="${data.image_url}"`)
+      .replace(/<a id="product-link"[^>]*href="[^"]*"/, `<a id="product-link" href="${data.image_click_link}"`);
 
-    // Generate image from HTML
+    // Generate screenshot
     const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'load' });
 
-    // Wait for image to load
     await page.waitForSelector('#product-image');
     await page.waitForFunction(() => {
       const img = document.querySelector('#product-image');
@@ -83,7 +78,7 @@ client.on('interactionCreate', async interaction => {
     await page.screenshot({ path: imagePath, fullPage: true });
     await browser.close();
 
-    // Email it
+    // Email setup
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -93,25 +88,37 @@ client.on('interactionCreate', async interaction => {
     });
 
     await transporter.sendMail({
-      from: '"StockX" <email@verifiedventures.co>',
+      from: `"StockX" <${process.env.EMAIL_USER}>`,
       replyTo: process.env.EMAIL_USER,
       to: data.email,
       subject: 'Your StockX order confirmation – Your StockX order has been delivered!',
-      html: html
+      html: html,
+      attachments: [{
+        filename: 'receipt.png',
+        path: imagePath,
+        cid: 'receipt@stockx'
+      }]
     });
 
     const attachment = new AttachmentBuilder(imagePath);
+
     await interaction.followUp({
       content: `✅ Receipt sent to **${data.email}**\n📎 Attached is your receipt:`,
       files: [attachment],
       ephemeral: false
     });
+
   } catch (err) {
     console.error("❌ Error generating or sending receipt:", err);
-    await interaction.reply({
-      content: "❌ Something went wrong while generating your receipt. Please try again.",
-      ephemeral: true
-    });
+
+    try {
+      await interaction.followUp({
+        content: "❌ Something went wrong while generating your receipt. Please try again.",
+        ephemeral: true
+      });
+    } catch (fallbackError) {
+      console.error("❗ Also failed to reply with error message:", fallbackError);
+    }
   }
 });
 
