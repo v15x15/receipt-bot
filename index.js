@@ -1,3 +1,8 @@
+require('dotenv').config(); // Loads the variables from .env
+
+const token = process.env.DISCORD_TOKEN; // Access the token
+
+
 const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
