@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",  // Added start script
+    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -11,9 +11,9 @@
   "license": "ISC",
   "dependencies": {
     "dotenv": "^16.5.0",
-    "discord.js": "^14.0.0",    // Add the discord.js package
-    "nodemailer": "^6.0.0",      // Add nodemailer for email handling
-    "puppeteer": "^19.0.0"       // Add puppeteer for screenshot generation
+    "discord.js": "^14.0.0",
+    "nodemailer": "^6.0.0",
+    "puppeteer": "^19.0.0"
   },
   "devDependencies": {},
   "repository": {
