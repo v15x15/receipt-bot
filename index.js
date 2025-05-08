@@ -1,129 +1,208 @@
-require('dotenv').config(); // Loads the variables from .env
+const express = require('express');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const dotenv = require('dotenv');
+const sendEmail = require('./sendEmail');
+const generateReceipt = require('./generateReceipt');
+const showUsersBalance = require('./usersbalance');
 
-const token = process.env.DISCORD_TOKEN; // Access the token
+dotenv.config();
 
-const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
-const puppeteer = require('puppeteer');
-const nodemailer = require('nodemailer');
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
+  ]
+});
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const tokenDB = {};
 
-client.once('ready', () => {
-  console.log(`🤖 StockX Bot Logged in as ${client.user.tag}`);
+const stockxCommand = new SlashCommandBuilder()
+  .setName('stockx')
+  .setDescription('Generate and send a StockX receipt (costs 1 token)')
+  .addStringOption(opt => opt.setName('image').setDescription('Image URL').setRequired(true))
+  .addStringOption(opt => opt.setName('link').setDescription('Link URL').setRequired(true))
+  .addStringOption(opt => opt.setName('title').setDescription('Item title').setRequired(true))
+  .addStringOption(opt => opt.setName('size').setDescription('Item size').setRequired(true))
+  .addStringOption(opt => opt.setName('condition').setDescription('Item condition').setRequired(true))
+  .addStringOption(opt => opt.setName('ordernumber').setDescription('Order number').setRequired(true))
+  .addStringOption(opt => opt.setName('price').setDescription('Price').setRequired(true))
+  .addStringOption(opt => opt.setName('tax').setDescription('Tax').setRequired(true))
+  .addStringOption(opt => opt.setName('fee').setDescription('Processing fee').setRequired(true))
+  .addStringOption(opt => opt.setName('shipping').setDescription('Shipping').setRequired(true))
+  .addStringOption(opt => opt.setName('total').setDescription('Total').setRequired(true))
+  .addStringOption(opt => opt.setName('deliverydate').setDescription('Delivery date').setRequired(true))
+  .addStringOption(opt => opt.setName('email').setDescription('Recipient email').setRequired(true));
+
+const balanceCommand = new SlashCommandBuilder()
+  .setName('balance')
+  .setDescription('Check how many tokens you have');
+
+const giveTokenCommand = new SlashCommandBuilder()
+  .setName('givetoken')
+  .setDescription('Give tokens to a user (only works in channel 1370066065488351395)')
+  .addUserOption(opt => opt.setName('user').setDescription('User to give tokens to').setRequired(true))
+  .addIntegerOption(opt => opt.setName('amount').setDescription('Number of tokens to give').setRequired(true))
+  .setDMPermission(false);
+
+const deleteMessageCommand = new SlashCommandBuilder()
+  .setName('deletemessage')
+  .setDescription('Delete a number of messages from a channel (admin only)')
+  .addChannelOption(opt => opt.setName('channel').setDescription('Channel to delete messages from').setRequired(true))
+  .addIntegerOption(opt => opt.setName('amount').setDescription('Number of messages to delete (0-100000)').setRequired(true))
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+  .setDMPermission(false);
+
+const usersBalanceCommand = new SlashCommandBuilder()
+  .setName('usersbalance')
+  .setDescription('Show all users and their token balances')
+  .setDMPermission(false);
+
+client.once('ready', async () => {
+  try {
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    await rest.put(Routes.applicationCommands(client.user.id), {
+      body: [stockxCommand, balanceCommand, giveTokenCommand, deleteMessageCommand, usersBalanceCommand],
+    });
+    console.log(`✅ Logged in as ${client.user.tag} and commands registered.`);
+  } catch (error) {
+    console.error('❌ Failed to register commands:', error);
+  }
 });
 
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand() || interaction.commandName !== 'stockx') return;
+  if (!interaction.isChatInputCommand()) return;
 
-  try {
-    const allowedChannelId = '1366732390919307316';
-    const requiredRoleId = '1366762958339838073';
+  const userId = interaction.user.id;
 
-    if (interaction.channelId !== allowedChannelId) {
-      return interaction.reply({ content: '🚫 Access Denied, Reason : Not a member', ephemeral: true });
+  if (interaction.commandName === 'balance') {
+    const balance = tokenDB[userId] || 0;
+    await interaction.reply({ content: `💰 You have ${balance} token(s).`, ephemeral: true });
+    return;
+  }
+
+  if (interaction.commandName === 'givetoken') {
+    if (interaction.channelId !== '1370066065488351395') {
+      await interaction.reply({ content: '❌ You can only use this command in the designated channel.', ephemeral: true });
+      return;
     }
 
-    if (!interaction.member.roles.cache.has(requiredRoleId)) {
-      return interaction.reply({ content: '🚫 Access Denied, Reason : Missing required role', ephemeral: true });
+    const targetUser = interaction.options.getUser('user');
+    const amount = interaction.options.getInteger('amount');
+
+    if (amount <= 0) {
+      await interaction.reply({ content: '❌ Amount must be greater than 0.', ephemeral: true });
+      return;
     }
 
-    const data = {
-      image_url: interaction.options.getString('image_url'),
-      image_click_link: interaction.options.getString('image_click_link'),
-      item_title: interaction.options.getString('item_title'),
-      item_size: interaction.options.getString('item_size'),
-      item_condition: interaction.options.getString('item_condition'),
-      order_number: interaction.options.getString('order_number'),
-      price: interaction.options.getString('price'),
-      tax: interaction.options.getString('tax'),
-      processing_fee: interaction.options.getString('processing_fee'),
-      shipping: interaction.options.getString('shipping'),
-      total: interaction.options.getString('total'),
-      delivery_date: interaction.options.getString('delivery_date'),
-      email: interaction.options.getString('email')
+    tokenDB[targetUser.id] = (tokenDB[targetUser.id] || 0) + amount;
+    await interaction.reply(`✅ Gave ${amount} token(s) to <@${targetUser.id}>.`);
+    return;
+  }
+
+  if (interaction.commandName === 'stockx') {
+    const currentTokens = tokenDB[userId] || 0;
+
+    if (currentTokens < 1) {
+      await interaction.reply({ content: '❌ You do not have enough tokens to generate a receipt.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const inputs = {
+      IMAGE_URL: interaction.options.getString('image'),
+      IMAGE_CLICK_LINK: interaction.options.getString('link'),
+      ITEM_TITLE: interaction.options.getString('title'),
+      ITEM_SIZE: interaction.options.getString('size'),
+      ITEM_CONDITION: interaction.options.getString('condition'),
+      ORDER_NUMBER: interaction.options.getString('ordernumber'),
+      PRICE: interaction.options.getString('price'),
+      TAX: interaction.options.getString('tax'),
+      PROCESSING_FEE: interaction.options.getString('fee'),
+      SHIPPING: interaction.options.getString('shipping'),
+      TOTAL: interaction.options.getString('total'),
+      DELIVERY_DATE: interaction.options.getString('deliverydate'),
+      email: interaction.options.getString('email'),
     };
 
-    await interaction.reply({ content: '🧾 Generating your receipt...', ephemeral: true });
-
-    let html = fs.readFileSync(path.join(__dirname, 'email.html'), 'utf8');
-
-    // Replace placeholders
-    html = html.replace(/<span id="item-title"><\/span>/, data.item_title)
-      .replace(/<span id="item-size"><\/span>/, data.item_size)
-      .replace(/<span id="item-condition"><\/span>/, data.item_condition)
-      .replace(/<span id="order-number"><\/span>/, data.order_number)
-      .replace(/<span id="price"><\/span>/, data.price)
-      .replace(/<span id="tax"><\/span>/, data.tax)
-      .replace(/<span id="processing-fee"><\/span>/, data.processing_fee)
-      .replace(/<span id="shipping"><\/span>/, data.shipping)
-      .replace(/<span id="total"><\/span>/, data.total)
-      .replace(/<span id="delivery-date"><\/span>/, data.delivery_date)
-      .replace(/<img id="product-image"[^>]*src="[^"]*"/, `<img id="product-image" src="${data.image_url}"`)
-      .replace(/<a id="product-link"[^>]*href="[^"]*"/, `<a id="product-link" href="${data.image_click_link}"`);
-
-    // Generate screenshot with Puppeteer using Render-safe flags
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'load' });
-
-    await page.waitForSelector('#product-image');
-    await page.waitForFunction(() => {
-      const img = document.querySelector('#product-image');
-      return img && img.complete && img.naturalHeight !== 0;
-    });
-
-    const imagePath = path.join(__dirname, 'receipt.png');
-    await page.screenshot({ path: imagePath, fullPage: true });
-    await browser.close();
-
-    // Email setup
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    await transporter.sendMail({
-      from: `"StockX" <${process.env.EMAIL_USER}>`,
-      replyTo: process.env.EMAIL_USER,
-      to: data.email,
-      subject: 'Your StockX order confirmation – Your StockX order has been delivered!',
-      html: html,
-      attachments: [{
-        filename: 'receipt.png',
-        path: imagePath,
-        cid: 'receipt@stockx'
-      }]
-    });
-
-    const attachment = new AttachmentBuilder(imagePath);
-
-    await interaction.followUp({
-      content: `✅ Receipt sent to **${data.email}**\n📎 Attached is your receipt:`,
-      files: [attachment],
-      ephemeral: false
-    });
-
-  } catch (err) {
-    console.error("❌ Error generating or sending receipt:", err);
-
     try {
-      await interaction.followUp({
-        content: "❌ Something went wrong while generating your receipt. Please try again.",
-        ephemeral: true
-      });
-    } catch (fallbackError) {
-      console.error("❗ Also failed to reply with error message:", fallbackError);
+      const htmlContent = await generateReceipt(inputs);
+      await sendEmail(inputs.email, htmlContent);
+      tokenDB[userId] -= 1;
+      await interaction.editReply('✅ Receipt sent successfully! 1 token has been deducted.');
+    } catch (error) {
+      console.error('❌ Error processing /stockx command:', error);
+      await interaction.editReply('❌ Failed to send the receipt.');
     }
+    return;
+  }
+
+  if (interaction.commandName === 'deletemessage') {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+      await interaction.reply({ content: '❌ You do not have permission to use this command.', ephemeral: true });
+      return;
+    }
+
+    const channel = interaction.options.getChannel('channel');
+    const amount = interaction.options.getInteger('amount');
+
+    if (!channel.isTextBased()) {
+      await interaction.reply({ content: '❌ That is not a valid text channel.', ephemeral: true });
+      return;
+    }
+
+    if (amount < 1 || amount > 100000) {
+      await interaction.reply({ content: '❌ Amount must be between 1 and 100000.', ephemeral: true });
+      return;
+    }
+
+    await interaction.reply({ content: `🧹 Deleting ${amount} messages...`, ephemeral: true });
+
+    let deleted = 0;
+    try {
+      while (deleted < amount) {
+        const toDelete = Math.min(100, amount - deleted);
+        const messages = await channel.messages.fetch({ limit: toDelete });
+        if (messages.size === 0) break;
+        const deletedMessages = await channel.bulkDelete(messages, true);
+        deleted += deletedMessages.size;
+      }
+
+      await interaction.editReply(`✅ Deleted ${deleted} message(s) from <#${channel.id}>.`);
+    } catch (err) {
+      console.error('❌ Error deleting messages:', err);
+      await interaction.editReply('❌ Failed to delete messages. I might not have permission or messages are too old.');
+    }
+    return;
+  }
+
+  if (interaction.commandName === 'usersbalance') {
+    if (interaction.channelId !== '1370066292739936366') {
+      await interaction.reply({ content: '❌ This command can only be used in the designated channel.', ephemeral: true });
+      return;
+    }
+
+    await showUsersBalance(interaction, client, tokenDB);
+    return;
   }
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
+// =======================
+// Express Health Check Server
+// =======================
+const app = express();
+
+// Basic health check endpoint
+app.get('/', (req, res) => {
+  res.send('Bot is running!');
+});
+
+// Start the Express server on port 3000 (or environment-defined port)
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🌐 Pinger is live on port ${PORT}`);
+});
